@@ -1,4 +1,4 @@
-<style>
+
     :root {
         --primary: #1a6faf;
         --primary-dark: #14578a;
@@ -1063,4 +1063,3 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
 #installBanner {
     padding-bottom: calc(15px + env(safe-area-inset-bottom)) !important;
 }
-</style>
