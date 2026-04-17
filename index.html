@@ -647,27 +647,23 @@ body { font-family: 'Segoe UI', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-seri
         const _canCompress = typeof CompressionStream !== 'undefined' && _iosVer >= 16;
 
         // ═══════════════════════════════════════
-        // HYBRID TEMPLATE LOADER
+        // TEMPLATE LOADER
         // ═══════════════════════════════════════
         async function loadTemplateHybrid() {
-            showToast('⚡ وضع الأداء السريع');
-            await new Promise(r => setTimeout(r, 100));
-            
-            // Use a chunked approach to avoid blocking the UI thread for too long
-            const binary = atob(TEMPLATE_B64);
-            const len = binary.length;
-            const bytes = new Uint8Array(len);
-            
-            const chunkSize = 50000;
-            for (let i = 0; i < len; i += chunkSize) {
-                const end = Math.min(i + chunkSize, len);
-                for (let j = i; j < end; j++) {
-                    bytes[j] = binary.charCodeAt(j);
+            showToast('⚡ جاري تحميل القالب...');
+            try {
+                // Fetch the template.xlsx file directly from the server
+                const response = await fetch('./template.xlsx');
+                if (!response.ok) {
+                    throw new Error('تعذر تحميل القالب: ' + response.status);
                 }
-                // Yield to UI thread every chunk
-                await new Promise(r => setTimeout(r, 0));
+                const arrayBuffer = await response.arrayBuffer();
+                return new Uint8Array(arrayBuffer);
+            } catch (error) {
+                console.error('Template loading error:', error);
+                showToast('خطأ في تحميل القالب: ' + error.message);
+                throw error;
             }
-            return bytes;
         }
 
         async function zipWrite(files) {
