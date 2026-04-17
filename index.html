@@ -13,7 +13,7 @@
 <link rel="apple-touch-icon" href="Icon.png">
 <link rel="stylesheet" href="style.css">
 	
-<script src="data.js"></script>
+//<script src="data.js"></script>
 <script>
     if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
@@ -737,14 +737,21 @@ body { font-family: 'Segoe UI', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-seri
         }
 
         // Patch sharedString at index: append user value as second rich-text run
+        // Uses fast indexed search instead of slow full-scan regex to avoid browser hang on large sharedStrings.xml
         function patchSharedString(ss, index, userValue) {
             const esc = v => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
             const vRun = '<r><rPr><sz val="16"/><rFont val="Times New Roman"/><family val="1"/></rPr><t xml:space="preserve"> ' + esc(userValue) + '</t></r>';
-            let i = -1;
-            return ss.replace(/<si>([\s\S]*?)<\/si>/g, (m, inner) => {
-                i++;
-                return i === index ? '<si>' + inner + vRun + '</si>' : m;
-            });
+            const open = '<si>', close = '</si>';
+            let pos = 0;
+            for (let i = 0; i <= index; i++) {
+                pos = ss.indexOf(open, pos);
+                if (pos === -1) return ss;
+                if (i < index) pos += open.length;
+            }
+            const innerStart = pos + open.length;
+            const innerEnd = ss.indexOf(close, innerStart);
+            if (innerEnd === -1) return ss;
+            return ss.slice(0, innerEnd) + vRun + ss.slice(innerEnd);
         }
 
         // Read a cell value from sheet XML
