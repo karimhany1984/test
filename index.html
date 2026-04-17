@@ -55,7 +55,7 @@ body { font-family: 'Segoe UI', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-seri
                 <span class="icon-sm">💾</span> حفظ
             </button>
             <button class="hbtn hbtn-accent" onclick="exportExcel()">
-                <span class="icon-sm">📥</span> <span class="hbtn-desktop">تصدير Excel</span><span class="hbtn-mobile">تصدير</span>
+                <span class="icon-sm">📥</span> <span class="hbtn-desktop">تصدير Excel</span>
             </button>
         </div>
     </header>
@@ -675,10 +675,22 @@ body { font-family: 'Segoe UI', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-seri
         // ═══════════════════════════════════════
         async function loadTemplateHybrid() {
             showToast('⚡ وضع الأداء السريع');
-            await new Promise(r => setTimeout(r, 40));
+            await new Promise(r => setTimeout(r, 100));
+            
+            // Use a chunked approach to avoid blocking the UI thread for too long
             const binary = atob(TEMPLATE_B64);
-            const bytes = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            const len = binary.length;
+            const bytes = new Uint8Array(len);
+            
+            const chunkSize = 50000;
+            for (let i = 0; i < len; i += chunkSize) {
+                const end = Math.min(i + chunkSize, len);
+                for (let j = i; j < end; j++) {
+                    bytes[j] = binary.charCodeAt(j);
+                }
+                // Yield to UI thread every chunk
+                await new Promise(r => setTimeout(r, 0));
+            }
             return bytes;
         }
 
@@ -892,24 +904,35 @@ body { font-family: 'Segoe UI', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-seri
 
                 // ── ITEM SCORES: cols I=9, J=10, K=11, L=12, M=13 ──
                 const toCol = c => c <= 26 ? String.fromCharCode(64 + c) : String.fromCharCode(64 + Math.floor((c - 1) / 26)) + String.fromCharCode(64 + ((c - 1) % 26 + 1));
+                
+                // Process in chunks to keep UI responsive
+                const allItems = [];
                 FORM_DATA.forEach(sec => {
                     let idx = 0;
                     sec.subsections.forEach(sub => sub.items.forEach(item => {
-                        const ik = `${sec.key}__${idx}`;
-                        const xRow = ROW_MAP[ik];
-                        if (xRow) {
-                            // Clear all score columns
-                            [9, 10, 11, 12].forEach(c => { sheet = patchCell(sheet, toCol(c) + xRow, ''); });
-                            const sc = scores[ik];
-                            if (sc === 0) sheet = patchCell(sheet, toCol(9) + xRow, '✓');
-                            else if (sc === 1) sheet = patchCell(sheet, toCol(10) + xRow, '✓');
-                            else if (sc === 2) sheet = patchCell(sheet, toCol(11) + xRow, '✓');
-                            else if (sc === 'NA') sheet = patchCell(sheet, toCol(12) + xRow, '✓');
-                            sheet = patchCell(sheet, toCol(13) + xRow, notes[ik] || '');
-                        }
+                        allItems.push({ secKey: sec.key, idx: idx });
                         idx++;
                     }));
                 });
+
+                for (let i = 0; i < allItems.length; i++) {
+                    const { secKey, idx } = allItems[i];
+                    const ik = `${secKey}__${idx}`;
+                    const xRow = ROW_MAP[ik];
+                    if (xRow) {
+                        // Clear all score columns
+                        [9, 10, 11, 12].forEach(c => { sheet = patchCell(sheet, toCol(c) + xRow, ''); });
+                        const sc = scores[ik];
+                        if (sc === 0) sheet = patchCell(sheet, toCol(9) + xRow, '✓');
+                        else if (sc === 1) sheet = patchCell(sheet, toCol(10) + xRow, '✓');
+                        else if (sc === 2) sheet = patchCell(sheet, toCol(11) + xRow, '✓');
+                        else if (sc === 'NA') sheet = patchCell(sheet, toCol(12) + xRow, '✓');
+                        sheet = patchCell(sheet, toCol(13) + xRow, notes[ik] || '');
+                    }
+                    
+                    // Yield to UI thread every 50 items
+                    if (i % 50 === 0) await new Promise(r => setTimeout(r, 0));
+                }
 
                 // ── SCORE SUMMARY TABLE (rows 744–775) ──
                 let tot0 = 0, tot1 = 0, tot2 = 0, totNA = 0, totEarned = 0, totMax = 0;
