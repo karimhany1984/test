@@ -7,7 +7,8 @@ const PRE_CACHE_ASSETS = [
     BASE + 'manifest.json',
     BASE + 'Icon.png',
     BASE + 'style.css',
-    BASE + 'data.js'
+    BASE + 'data.js',
+    BASE + 'template.xlsx'
 ];
 
 // Install: Cache essential files with error handling
