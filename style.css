@@ -158,6 +158,9 @@ body {
 @media (max-width: 599px) {
   .hbtn-desktop { display: none; }
 }
+@media (min-width: 600px) {
+  .hbtn-mobile { display: none; }
+}
 
 /* ========== GLOBAL PROGRESS ========== */
 .global-progress {
