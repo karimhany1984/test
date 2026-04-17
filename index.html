@@ -742,10 +742,53 @@ body { font-family: 'Segoe UI', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-seri
                 return '<c r="' + cellRef + '"' + a + ' t="str"><v>' + esc(value) + '</v></c>';
             };
             // Self-closing: <c r="I13" s="4"/>
-            sheet = sheet.replace(new RegExp('<c r="' + cellRef + '"([^/]*)/>'), repl);
+            sheet = sheet.replace(new RegExp('<c r="' + cellRef + '"([^/]*)/>', 'g'), repl);
             // With content: <c r="I13" s="4" t="s"><v>...</v></c>
-            sheet = sheet.replace(new RegExp('<c r="' + cellRef + '"([^>]*)>[\s\S]*?<\/c>'), repl);
+            sheet = sheet.replace(new RegExp('<c r="' + cellRef + '"([^>]*)>[\s\S]*?<\/c>', 'g'), repl);
             return sheet;
+        }
+
+        // Batch patch cells: more efficient for multiple updates
+        function batchPatchCells(sheet, patches) {
+            // patches is an array of {cellRef, value} objects
+            const esc = v => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            
+            // Build a map of cellRef -> value for fast lookup
+            const patchMap = {};
+            patches.forEach(p => { patchMap[p.cellRef] = p.value; });
+            
+            // Parse the sheet and apply patches in a single pass
+            let result = '';
+            let lastIdx = 0;
+            const cellRegex = /<c r="([^"]+)"([^>]*)>([\s\S]*?)<\/c>|<c r="([^"]+)"([^/]*)\/>/g;
+            let match;
+            
+            while ((match = cellRegex.exec(sheet)) !== null) {
+                result += sheet.substring(lastIdx, match.index);
+                
+                const cellRef = match[1] || match[4];
+                const attrs = match[2] || match[5];
+                
+                if (patchMap.hasOwnProperty(cellRef)) {
+                    const value = patchMap[cellRef];
+                    const a = attrs.replace(/\s*t="[^"]*"/g, '');
+                    
+                    if (value === null || value === '' || value === undefined) {
+                        result += '<c r="' + cellRef + '"' + a + '/>';
+                    } else if (typeof value === 'number') {
+                        result += '<c r="' + cellRef + '"' + a + '><v>' + value + '</v></c>';
+                    } else {
+                        result += '<c r="' + cellRef + '"' + a + ' t="str"><v>' + esc(value) + '</v></c>';
+                    }
+                } else {
+                    result += match[0];
+                }
+                
+                lastIdx = cellRegex.lastIndex;
+            }
+            
+            result += sheet.substring(lastIdx);
+            return result;
         }
 
         // Patch sharedString at index: append user value as second rich-text run
@@ -915,27 +958,29 @@ body { font-family: 'Segoe UI', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-seri
                     }));
                 });
 
+                // Batch all cell patches for efficiency
+                const cellPatches = [];
                 for (let i = 0; i < allItems.length; i++) {
                     const { secKey, idx } = allItems[i];
                     const ik = `${secKey}__${idx}`;
                     const xRow = ROW_MAP[ik];
                     if (xRow) {
                         // Clear all score columns
-                        [9, 10, 11, 12].forEach(c => { sheet = patchCell(sheet, toCol(c) + xRow, ''); });
+                        [9, 10, 11, 12].forEach(c => { cellPatches.push({ cellRef: toCol(c) + xRow, value: '' }); });
                         const sc = scores[ik];
-                        if (sc === 0) sheet = patchCell(sheet, toCol(9) + xRow, '✓');
-                        else if (sc === 1) sheet = patchCell(sheet, toCol(10) + xRow, '✓');
-                        else if (sc === 2) sheet = patchCell(sheet, toCol(11) + xRow, '✓');
-                        else if (sc === 'NA') sheet = patchCell(sheet, toCol(12) + xRow, '✓');
-                        sheet = patchCell(sheet, toCol(13) + xRow, notes[ik] || '');
+                        if (sc === 0) cellPatches.push({ cellRef: toCol(9) + xRow, value: '✓' });
+                        else if (sc === 1) cellPatches.push({ cellRef: toCol(10) + xRow, value: '✓' });
+                        else if (sc === 2) cellPatches.push({ cellRef: toCol(11) + xRow, value: '✓' });
+                        else if (sc === 'NA') cellPatches.push({ cellRef: toCol(12) + xRow, value: '✓' });
+                        cellPatches.push({ cellRef: toCol(13) + xRow, value: notes[ik] || '' });
                     }
-                    
-                    // Yield to UI thread every 50 items
-                    if (i % 50 === 0) await new Promise(r => setTimeout(r, 0));
                 }
+                sheet = batchPatchCells(sheet, cellPatches);
+                await new Promise(r => setTimeout(r, 0));
 
                 // ── SCORE SUMMARY TABLE (rows 744–775) ──
                 let tot0 = 0, tot1 = 0, tot2 = 0, totNA = 0, totEarned = 0, totMax = 0;
+                const summaryPatches = [];
                 FORM_DATA.forEach(sec => {
                     const xRow = SECTION_ROWS_MAP[sec.key];
                     if (!xRow) return;
@@ -947,21 +992,24 @@ body { font-family: 'Segoe UI', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-seri
                     }));
                     const earned = c1 + c2 * 2, jVal = c2 * 2;
                     const pct = sec.max > 0 ? ((c1 + jVal) / sec.max * 100) : 0;
-                    sheet = patchCell(sheet, 'G' + xRow, c0 || '');
-                    sheet = patchCell(sheet, 'H' + xRow, c1 || '');
-                    sheet = patchCell(sheet, 'J' + xRow, jVal || '');
-                    sheet = patchCell(sheet, 'L' + xRow, cNA || '');
-                    sheet = patchCell(sheet, 'M' + xRow, pct > 0 ? `${pct.toFixed(1)}%` : '');
+                    summaryPatches.push({ cellRef: 'G' + xRow, value: c0 || '' });
+                    summaryPatches.push({ cellRef: 'H' + xRow, value: c1 || '' });
+                    summaryPatches.push({ cellRef: 'J' + xRow, value: jVal || '' });
+                    summaryPatches.push({ cellRef: 'L' + xRow, value: cNA || '' });
+                    summaryPatches.push({ cellRef: 'M' + xRow, value: pct > 0 ? `${pct.toFixed(1)}%` : '' });
                     tot0 += c0; tot1 += c1; tot2 += jVal; totNA += cNA; totEarned += earned; totMax += sec.max;
                 });
 
                 // ── GRAND TOTAL ROW 775 ──
                 const grandPct = totMax > 0 ? (totEarned / totMax * 100) : 0;
-                sheet = patchCell(sheet, 'G775', tot0 || '');
-                sheet = patchCell(sheet, 'H775', tot1 || '');
-                sheet = patchCell(sheet, 'J775', tot2 || '');
-                sheet = patchCell(sheet, 'L775', totNA || '');
-                sheet = patchCell(sheet, 'M775', grandPct > 0 ? `${grandPct.toFixed(1)}%` : '');
+                summaryPatches.push({ cellRef: 'G775', value: tot0 || '' });
+                summaryPatches.push({ cellRef: 'H775', value: tot1 || '' });
+                summaryPatches.push({ cellRef: 'J775', value: tot2 || '' });
+                summaryPatches.push({ cellRef: 'L775', value: totNA || '' });
+                summaryPatches.push({ cellRef: 'M775', value: grandPct > 0 ? `${grandPct.toFixed(1)}%` : '' });
+                
+                sheet = batchPatchCells(sheet, summaryPatches);
+                await new Promise(r => setTimeout(r, 0));
 
                 // ── PUT BACK & REZIP ──
                 files['xl/worksheets/sheet1.xml'] = new TextEncoder().encode(sheet);
