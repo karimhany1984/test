@@ -666,13 +666,6 @@ body { font-family: 'Segoe UI', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-seri
             return null; // not iOS
         }
 
-        function shouldUseExternalTemplate() {
-            const iosVersion = getIOSVersion();
-            // Old iOS (<=15) -> external template (avoids base64 memory spike)
-            if (iosVersion !== null && iosVersion <= 15) return true;
-            // iOS 16+, Android, Desktop -> base64 (fast, no network needed)
-            return false;
-        }
 
         const _iosVer = getIOSVersion() ?? 99;
         const _canCompress = typeof CompressionStream !== 'undefined' && _iosVer >= 16;
@@ -681,13 +674,6 @@ body { font-family: 'Segoe UI', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-seri
         // HYBRID TEMPLATE LOADER
         // ═══════════════════════════════════════
         async function loadTemplateHybrid() {
-            if (shouldUseExternalTemplate()) {
-                showToast('⚙️ وضع الأجهزة القديمة مفعّل');
-                await new Promise(r => setTimeout(r, 40));
-                const response = await fetch('./template.xlsx');
-                if (!response.ok) throw new Error('تعذّر تحميل القالب: ' + response.status);
-                return new Uint8Array(await response.arrayBuffer());
-            }
             showToast('⚡ وضع الأداء السريع');
             await new Promise(r => setTimeout(r, 40));
             const binary = atob(TEMPLATE_B64);
