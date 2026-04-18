@@ -874,7 +874,7 @@ body { font-family: 'Segoe UI', 'Arial Unicode MS', 'Tahoma', 'Arial', sans-seri
                 ss = patchSharedString(ss, 740, meta.inspectors || '');
                 ss = patchSharedString(ss, 741, meta.type || '');
                 ss = patchSharedString(ss, 742, meta.result || '');
-                sheet = patchCell(sheet, 'F741', meta.result || '');
+                // Note: F741 is not in the template, but we keep the logic if needed for other cells.
 
                 // ── ITEM SCORES: cols I=9, J=10, K=11, L=12, M=13 ──
                 const toCol = c => c <= 26 ? String.fromCharCode(64 + c) : String.fromCharCode(64 + Math.floor((c - 1) / 26)) + String.fromCharCode(64 + ((c - 1) % 26 + 1));
