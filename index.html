@@ -5975,6 +5975,24 @@ files['xl/workbook.xml'] = new TextEncoder().encode(workbook);
     window.addEventListener('appinstalled', () => {
         installBanner.style.display = 'none';
     });
+	function scrollToNextUnanswered() {
+    const allRows = document.querySelectorAll('.item-row');
+    for (let row of allRows) {
+        // Check if the row has any of the 'scored' classes
+        const isAnswered = row.classList.contains('scored-0') || 
+                           row.classList.contains('scored-1') || 
+                           row.classList.contains('scored-2') || 
+                           row.classList.contains('scored-na');
+        if (!isAnswered) {
+            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            row.style.outline = '2px solid #e8a020'; // Temporary highlight
+            setTimeout(() => row.style.outline = 'none', 2000);
+            return;
+        }
+    }
+    alert("All questions in this section are answered!");
+}
+
 </script>
 </body>
 </html>
