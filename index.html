@@ -1114,6 +1114,9 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
             <button class="hbtn hbtn-ghost hbtn-desktop" onclick="openUploadDialog()">
                 <span class="icon-sm">📂</span> فتح ملف
             </button>
+            <button class="hbtn hbtn-ghost hbtn-desktop" onclick="openMergeDialog()" title="دمج تقرير مفتش آخر">
+                <span class="icon-sm">🔗</span> دمج تقرير
+            </button>
           
             <button class="hbtn hbtn-accent" onclick="exportExcel()">
                 <span class="icon-sm">📥</span> <span class="hbtn-desktop">Excel</span><span class="hbtn-mobile">تصدير</span>
@@ -1178,11 +1181,26 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
         </div>
     </div>
 
+    <!-- MERGE CONFLICT MODAL -->
+    <div class="modal-bg" id="mergeModalBg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;align-items:center;justify-content:center;padding:12px;">
+        <div class="modal" style="max-width:620px;width:100%;max-height:90vh;display:flex;flex-direction:column;">
+            <h3 id="mergeModalTitle"></h3>
+            <p id="mergeModalBody" style="margin-bottom:8px;"></p>
+            <div id="mergeConflictList" style="overflow-y:auto;flex:1;margin-bottom:14px;border:1px solid var(--border);border-radius:8px;max-height:52vh;"></div>
+            <div class="modal-btns" style="flex-shrink:0;">
+                <button class="btn btn-primary"  id="mergeKeepBtn">إبقاء الحالي</button>
+                <button class="btn btn-danger"   id="mergeOverwriteBtn">استبدال بالجديد</button>
+                <button class="btn btn-ghost"    onclick="closeMergeModal()">إلغاء</button>
+            </div>
+        </div>
+    </div>
+
     <!-- TOAST -->
     <div class="toast" id="toast"></div>
 
     <!-- HIDDEN FILE INPUT -->
     <input type="file" id="fileInput" accept=".xlsx,.xls" onchange="handleFileUpload(event)">
+    <input type="file" id="mergeInput" accept=".xlsx,.xls" onchange="handleMergeUpload(event)">
 
     <script>
         // ═══════════════════════════════════════
@@ -5174,6 +5192,7 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
 
           <div class="quick-actions">
             <button class="qa-btn" onclick="openUploadDialog()">📂 فتح ملف محفوظ سابق</button>
+            <button class="qa-btn" onclick="openMergeDialog()" style="border-color:#0a7764;color:#0a7764;">🔗 دمج تقرير مفتش آخر</button>
             
             <button class="qa-btn" onclick="showSection('summary')">📈 ملخص النتائج</button>
             <button class="qa-btn green" onclick="exportExcel()">📥 تصدير Excel</button>
@@ -5890,6 +5909,217 @@ function setNote(ik, val) {
             }
             event.target.value = '';
         }
+
+        // ═══════════════════════════════════════
+        // MERGE REPORT FEATURE
+        // ═══════════════════════════════════════
+        function openMergeDialog() {
+            document.getElementById('mergeInput').click();
+        }
+
+        async function handleMergeUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            showToast('جاري قراءة التقرير المراد دمجه...');
+            try {
+                const buf = new Uint8Array(await file.arrayBuffer());
+                const files = await zipRead(buf);
+                const sheet = new TextDecoder().decode(files['xl/worksheets/sheet1.xml']);
+                const ss_xml = new TextDecoder().decode(files['xl/sharedStrings.xml']);
+
+                // Parse shared strings
+                const ssItems = [];
+                ss_xml.replace(/<si>([\s\S]*?)<\/si>/g, (m, inner) => {
+                    let txt = '';
+                    inner.replace(/<t[^>]*>([^<]*)<\/t>/g, (_, t) => { txt += t; });
+                    ssItems.push(txt.trim());
+                });
+
+                // Read all scores + notes from the incoming file
+                const incomingScores = {};
+                const incomingNotes  = {};
+
+                FORM_DATA.forEach(sec => {
+                    let idx = 0;
+                    sec.subsections.forEach(sub => sub.items.forEach(() => {
+                        const mapKey = sec.key + '__' + idx;
+                        const exRow  = ROW_MAP[mapKey];
+                        if (exRow) {
+                            // Score (col C)
+                            const cRe = new RegExp('<c\\s[^>]*r="C' + exRow + '"(?=[">/ ])[^>]*>(?:(?!<\/row>)[\\s\\S])*?<\/c>');
+                            const cM  = sheet.match(cRe);
+                            if (cM) {
+                                const vM = cM[0].match(/<v>([^<]*)<\/v>/);
+                                if (vM) {
+                                    let val = vM[1].trim();
+                                    if (/\bt="s"/.test(cM[0])) {
+                                        const si = parseInt(val);
+                                        if (!isNaN(si) && ssItems[si] !== undefined) val = ssItems[si];
+                                    }
+                                    if (val === 'N/A') incomingScores[mapKey] = 'N/A';
+                                    else if (val === '0' || val === '0.0') incomingScores[mapKey] = 0;
+                                    else if (val === '1' || val === '1.0') incomingScores[mapKey] = 1;
+                                    else if (val === '2' || val === '2.0') incomingScores[mapKey] = 2;
+                                }
+                            }
+                            // Note (col D)
+                            const dRe = new RegExp('<c\\s[^>]*r="D' + exRow + '"(?=[">/ ])[^>]*>(?:(?!<\/row>)[\\s\\S])*?<\/c>');
+                            const dM  = sheet.match(dRe);
+                            if (dM) {
+                                const vM = dM[0].match(/<v>([^<]*)<\/v>/);
+                                if (vM && vM[1].trim()) {
+                                    if (/\bt="s"/.test(dM[0])) {
+                                        const si = parseInt(vM[1].trim());
+                                        if (!isNaN(si) && ssItems[si]) incomingNotes[mapKey] = ssItems[si];
+                                    } else {
+                                        incomingNotes[mapKey] = vM[1].trim();
+                                    }
+                                }
+                            }
+                        }
+                        idx++;
+                    }));
+                });
+
+                const totalIncoming = Object.keys(incomingScores).length + Object.keys(incomingNotes).length;
+                if (totalIncoming === 0) {
+                    showToast('الملف المحمل لا يحتوي على بيانات للدمج');
+                    event.target.value = '';
+                    return;
+                }
+
+                // Build a label map: mapKey → {sectionTitle, questionText}
+                const labelMap = {};
+                FORM_DATA.forEach(sec => {
+                    let idx = 0;
+                    sec.subsections.forEach(sub => {
+                        sub.items.forEach(item => {
+                            labelMap[sec.key + '__' + idx] = {
+                                section: sec.title,
+                                text: item.text
+                            };
+                            idx++;
+                        });
+                    });
+                });
+
+                // Conflicts: question answered in BOTH reports
+                const conflicts = Object.keys(incomingScores).filter(
+                    k => scores[k] !== undefined && incomingScores[k] !== undefined
+                );
+                const newEntries = Object.keys(incomingScores).filter(
+                    k => scores[k] === undefined
+                );
+
+                // Build rich conflict details for display
+                const conflictDetails = conflicts.map(k => ({
+                    key:      k,
+                    label:    labelMap[k] || { section: '', text: k },
+                    current:  scores[k],
+                    incoming: incomingScores[k]
+                }));
+
+                // Apply merge: overwriteConflicts=true → replace, false → keep current
+                function applyMerge(overwriteConflicts) {
+                    let merged = 0, skipped = 0;
+
+                    Object.keys(incomingScores).forEach(k => {
+                        if (scores[k] !== undefined && !overwriteConflicts) {
+                            skipped++;
+                        } else {
+                            scores[k] = incomingScores[k];
+                            merged++;
+                        }
+                    });
+
+                    // Notes: append if both exist, otherwise just set
+                    Object.keys(incomingNotes).forEach(k => {
+                        if (notes[k] && incomingNotes[k] && notes[k] !== incomingNotes[k]) {
+                            notes[k] = notes[k] + ' | ' + incomingNotes[k];
+                        } else if (incomingNotes[k]) {
+                            notes[k] = incomingNotes[k];
+                        }
+                    });
+
+                    updateMetaResult();
+                    saveToLocal();
+                    buildSidebarNav();
+                    updateProgress();
+                    showHome();
+
+                    const msg = overwriteConflicts
+                        ? ('✓ تم الدمج: ' + merged + ' سؤال مُحدَّث، ' + skipped + ' تجاوزناه')
+                        : ('✓ تم الدمج: ' + merged + ' سؤال جديد أُضيف، ' + skipped + ' تجاوزناه');
+                    showToast(msg);
+                }
+
+                if (conflicts.length > 0) {
+                    showMergeConflictModal(conflictDetails, newEntries.length, applyMerge);
+                } else {
+                    applyMerge(false);
+                }
+
+            } catch (e) {
+                console.error(e);
+                showToast('خطأ في قراءة الملف: ' + e.message);
+            }
+            event.target.value = '';
+        }
+
+        function showMergeConflictModal(conflictDetails, newCount, applyMerge) {
+            const scoreLabel = v => v === 'N/A' ? 'N/A' : v === 0 ? '0 ✗' : v === 1 ? '1 ◑' : v === 2 ? '2 ✓' : '—';
+            const scoreColor = v => v === 0 ? '#e74c3c' : v === 1 ? '#e67e22' : v === 2 ? '#27ae60' : '#999';
+
+            document.getElementById('mergeModalTitle').textContent = '⚠️ تعارض في البيانات';
+            document.getElementById('mergeModalBody').innerHTML =
+                'التقرير الجديد يحتوي على ' +
+                '<strong>' + newCount + '</strong> سؤال جديد و' +
+                '<strong> ' + conflictDetails.length + '</strong> سؤال متعارض (مُجاب في كلا التقريرين).<br>' +
+                'راجع الأسئلة المتعارضة أدناه ثم اختر كيفية المعالجة:';
+
+            // Build conflict list
+            let lastSection = '';
+            const rows = conflictDetails.map(d => {
+                let sectionHeader = '';
+                if (d.label.section !== lastSection) {
+                    lastSection = d.label.section;
+                    sectionHeader = '<div style="background:var(--primary);color:#fff;padding:5px 10px;font-size:11px;font-weight:700;direction:rtl;">' +
+                        d.label.section + '</div>';
+                }
+                const shortText = d.label.text.length > 90
+                    ? d.label.text.slice(0, 90) + '…'
+                    : d.label.text;
+                return sectionHeader +
+                    '<div style="display:flex;align-items:center;gap:6px;padding:7px 10px;border-bottom:1px solid var(--border-light);direction:rtl;">' +
+                        '<div style="flex:1;font-size:12px;color:var(--text);line-height:1.4;">' + shortText + '</div>' +
+                        '<div style="display:flex;gap:4px;flex-shrink:0;align-items:center;">' +
+                            '<span style="font-size:10px;color:var(--text-muted);">حالي:</span>' +
+                            '<span style="font-size:12px;font-weight:700;color:' + scoreColor(d.current)  + ';min-width:28px;text-align:center;">' + scoreLabel(d.current)  + '</span>' +
+                            '<span style="font-size:14px;color:var(--text-dim);">→</span>' +
+                            '<span style="font-size:10px;color:var(--text-muted);">جديد:</span>' +
+                            '<span style="font-size:12px;font-weight:700;color:' + scoreColor(d.incoming) + ';min-width:28px;text-align:center;">' + scoreLabel(d.incoming) + '</span>' +
+                        '</div>' +
+                    '</div>';
+            }).join('');
+
+            document.getElementById('mergeConflictList').innerHTML = rows ||
+                '<div style="padding:12px;text-align:center;color:var(--text-muted);">لا توجد تعارضات</div>';
+
+            document.getElementById('mergeKeepBtn').onclick = () => {
+                closeMergeModal();
+                applyMerge(false);
+            };
+            document.getElementById('mergeOverwriteBtn').onclick = () => {
+                closeMergeModal();
+                applyMerge(true);
+            };
+            document.getElementById('mergeModalBg').style.display = 'flex';
+        }
+
+        function closeMergeModal() {
+            document.getElementById('mergeModalBg').style.display = 'none';
+        }
+
 function forceRecalculation(workbookXml) {
     // Add fullCalcOnLoad attribute to force recalculation when opening
     if (workbookXml.includes('<calcPr')) {
@@ -6024,7 +6254,13 @@ files['xl/workbook.xml'] = new TextEncoder().encode(workbook);
             document.getElementById('modalBg').classList.add('open');
             document.getElementById('modalConfirm').onclick = () => { closeModal(); if (_mcb) _mcb(); };
         }
-        function closeModal() { document.getElementById('modalBg').classList.remove('open'); }
+        function closeModal() {
+            document.getElementById('modalBg').classList.remove('open');
+            // Always restore original modal buttons (merge modal may have replaced them)
+            document.querySelector('.modal-btns').innerHTML =
+                '<button class="btn btn-danger" id="modalConfirm">تأكيد</button>' +
+                '<button class="btn btn-ghost" onclick="closeModal()">إلغاء</button>';
+        }
         let _toastTimer;
         function showToast(msg) {
             const t = document.getElementById('toast');
