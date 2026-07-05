@@ -4300,6 +4300,7 @@ button, .nav-item, .nav-card, .qa-btn, .sec-nav-btn, .mobile-nav-btn, .hbtn {
         let meta = { hospital: '', hospitalName: '', region: '', type: '', governorate: 'الاسكندرية', inspectors: '', dates: '', result: '' };
         let highlightedSections = {};
         let sectionDates = {};
+        let sectionInspectors = {};   // stores القائم بالتقييم name per section key
         let currentSection = 'home';
         let currentReportFilters = { region: '', hospitalName: '', year: '', month: '' };
         let currentAnalysisFilters = { region: '', hospitalName: '', governorate: '', year: '', month: '' };
@@ -5243,19 +5244,52 @@ self.onmessage = async function(e) {
                                             }
                                         };
 
+                                        // Helper: safely update A{row} cell value in-place — same logic as setBDate.
+                                        // Verified against actual template.xlsx: A9:A52 are empty self-closing cells (s="47"),
+                                        // column C holds the "م" serial number, so writing to A does not collide with existing data.
+                                        const setAInspector = (xml, row, txt) => {
+                                            if (!txt) return xml;
+                                            const ref = 'A' + row;
+                                            const aci = xml.indexOf('r="' + ref + '"');
+                                            if (aci >= 0) {
+                                                const acs = xml.lastIndexOf('<c ', aci);
+                                                if (acs < 0) return xml;
+                                                const ate = xml.indexOf('>', acs);
+                                                if (ate < 0) return xml;
+                                                if (xml[ate - 1] === '/') {
+                                                    const newCell = '<c r="' + ref + '" s="47" t="inlineStr"><is><t>' + txt + '</t></is></c>';
+                                                    return xml.slice(0, acs) + newCell + xml.slice(ate + 1);
+                                                } else {
+                                                    const ace = xml.indexOf('</c>', ate);
+                                                    if (ace < 0) return xml;
+                                                    const newCell = '<c r="' + ref + '" s="47" t="inlineStr"><is><t>' + txt + '</t></is></c>';
+                                                    return xml.slice(0, acs) + newCell + xml.slice(ace + 4);
+                                                }
+                                            } else {
+                                                const ri = xml.indexOf('<row r="' + row + '"');
+                                                if (ri < 0) return xml;
+                                                const rte = xml.indexOf('>', ri);
+                                                if (rte < 0) return xml;
+                                                const newCell = '<c r="' + ref + '" s="47" t="inlineStr"><is><t>' + txt + '</t></is></c>';
+                                                return xml.slice(0, rte + 1) + newCell + xml.slice(rte + 1);
+                                            }
+                                        };
+
                                         // Apply to each section: D9-D42=idx 0-33, skip D43, D44-D52=idx 34-42
                                         const formDataKeys = FORM_DATA.map(s => s.key);
                                         formDataKeys.forEach((key, idx) => {
                                             const dRow = idx <= 33 ? 9 + idx : 10 + idx;
                                             const hl   = highlightedSections[key];
                                             if ((hl === 'new' || hl === true) && yellowStyleIdx >= 0) {
-                                                // 'new': yellow fill + CURRENT report date (not stored sectionDate)
+                                                // 'new': yellow fill + CURRENT report date & inspector (not stored historical values)
                                                 sheet3 = setDStyle(sheet3, dRow, yellowStyleIdx);
                                                 sheet3 = setBDate(sheet3, dRow, meta.dates || '');
+                                                sheet3 = setAInspector(sheet3, dRow, meta.inspectors || '');
                                             } else if (hl === 'imported' && whiteStyleIdx >= 0) {
-                                                // 'imported': white fill + stored historical date
+                                                // 'imported': white fill + stored historical date & inspector
                                                 sheet3 = setDStyle(sheet3, dRow, whiteStyleIdx);
                                                 if (sectionDates[key]) sheet3 = setBDate(sheet3, dRow, sectionDates[key]);
+                                                if (sectionInspectors[key]) sheet3 = setAInspector(sheet3, dRow, sectionInspectors[key]);
                                             }
                                         });
 
@@ -5887,7 +5921,7 @@ sec.subsections.forEach(sub => {
             debounceSave(); buildSidebarNav(); renderSummary();
         }
         function clearAllHighlights() {
-            highlightedSections = {}; sectionDates = {};
+            highlightedSections = {}; sectionDates = {}; sectionInspectors = {};
             debounceSave(); buildSidebarNav(); renderSummary();
         }
 
@@ -5919,6 +5953,7 @@ sec.subsections.forEach(sub => {
             // Auto-highlight section as 'new' and record date
             highlightedSections[secKeyFromIk] = 'new';
             sectionDates[secKeyFromIk] = meta.dates || new Date().toLocaleDateString('ar-EG', { year:'numeric', month:'2-digit', day:'2-digit' });
+            sectionInspectors[secKeyFromIk] = meta.inspectors || '';
             const row = document.getElementById(`irow-${ik}`);
             if (row) {
                 row.classList.remove('scored-0', 'scored-1', 'scored-2', 'scored-na');
@@ -5953,6 +5988,7 @@ sec.subsections.forEach(sub => {
             if (secKey) {
                 highlightedSections[secKey] = 'new';
                 sectionDates[secKey] = meta.dates || new Date().toLocaleDateString('ar-EG', { year:'numeric', month:'2-digit', day:'2-digit' });
+                sectionInspectors[secKey] = meta.inspectors || '';
                 updateNavItem(secKey);
             }
             debounceSave();
@@ -6069,7 +6105,7 @@ sec.subsections.forEach(sub => {
         function debounceSave() { clearTimeout(saveTimer); saveTimer = setTimeout(saveToLocal, 800); }
         function saveToLocal() {
             try {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify({ scores, notes, meta, highlightedSections, sectionDates, savedAt: new Date().toISOString() }));
+                localStorage.setItem(STORAGE_KEY, JSON.stringify({ scores, notes, meta, highlightedSections, sectionDates, sectionInspectors, savedAt: new Date().toISOString() }));
                 showToast('✓ تم الحفظ');
             } catch (e) { showToast('تعذر الحفظ'); }
         }
@@ -6082,6 +6118,7 @@ sec.subsections.forEach(sub => {
                     meta = { ...meta, ...(d.meta || {}) };
                     highlightedSections = d.highlightedSections || {};
                     sectionDates = d.sectionDates || {};
+                    sectionInspectors = d.sectionInspectors || {};
                     
                     updateMetaResult();
                     buildSidebarNav();
@@ -6102,7 +6139,7 @@ sec.subsections.forEach(sub => {
 
         function confirmClear() {
             openModal('مسح جميع البيانات', 'هل أنت متأكد؟ سيتم حذف جميع التقييمات والملاحظات.', () => {
-                scores = {}; notes = {}; meta = { hospital: '', hospitalName: '', region: '', type: '', governorate: 'الاسكندرية', inspectors: '', dates: '', result: '' }; highlightedSections = {}; sectionDates = {};
+                scores = {}; notes = {}; meta = { hospital: '', hospitalName: '', region: '', type: '', governorate: 'الاسكندرية', inspectors: '', dates: '', result: '' }; highlightedSections = {}; sectionDates = {}; sectionInspectors = {};
                 localStorage.removeItem(STORAGE_KEY);
                 buildSidebarNav(); updateProgress(); showHome(); showToast('تم مسح البيانات');
             });
@@ -6647,8 +6684,11 @@ function _applyImportedHighlights(zipFiles) {
             if (!secKey) continue;
             // Read B column date — only treat as date if it looks like one
             const bDate = _readCellText(sheet3Xml, 'B' + row);
+            // Read A column — القائم بالتقييم name (verified empty in template; safe to read/write)
+            const aInspector = _readCellText(sheet3Xml, 'A' + row);
             if (bDate && isDateLike(bDate)) {
                 sectionDates[secKey] = bDate;
+                if (aInspector) sectionInspectors[secKey] = aInspector;
                 if (highlightedSections[secKey] !== 'new') { highlightedSections[secKey] = 'imported'; found++; }
             }
             // Also check D for yellow fill
