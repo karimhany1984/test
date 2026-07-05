@@ -6463,6 +6463,13 @@ async function loadFromDatabase(id) {
                 notes = data.notes || {};
                 sectionDates = data.sectionDates || {};
                 highlightedSections = data.highlightedSections || {};
+                // A section marked 'new' belongs to a past (saved) session now —
+                // demote it to 'imported' (blue) so it isn't shown as edited in THIS session.
+                Object.keys(highlightedSections).forEach(k => {
+                    if (highlightedSections[k] === 'new' || highlightedSections[k] === true) {
+                        highlightedSections[k] = 'imported';
+                    }
+                });
                 
                 updateMetaResult();
                 buildSidebarNav();
@@ -7195,10 +7202,23 @@ async function exportSingleReport(id) {
         const tempMeta = { ...meta };
         const tempScores = { ...scores };
         const tempNotes = { ...notes };
+        const tempHighlighted = { ...highlightedSections };
+        const tempSectionDates = { ...sectionDates };
+        const tempSectionInspectors = { ...sectionInspectors };
         
         meta = { ...report };
         scores = report.scores || {};
         notes = report.notes || {};
+        highlightedSections = report.highlightedSections || {};
+        sectionDates = report.sectionDates || {};
+        sectionInspectors = report.sectionInspectors || {};
+        // Same session-boundary rule as loadFromDatabase: a 'new' section from a
+        // saved report belongs to a past session — treat it as 'imported' (blue).
+        Object.keys(highlightedSections).forEach(k => {
+            if (highlightedSections[k] === 'new' || highlightedSections[k] === true) {
+                highlightedSections[k] = 'imported';
+            }
+        });
         
         await exportExcel();
         
@@ -7206,6 +7226,9 @@ async function exportSingleReport(id) {
         meta = tempMeta;
         scores = tempScores;
         notes = tempNotes;
+        highlightedSections = tempHighlighted;
+        sectionDates = tempSectionDates;
+        sectionInspectors = tempSectionInspectors;
     }
 }
 
